@@ -37,7 +37,11 @@ spec:
             - name: SPRING_PROFILES_ACTIVE
               value: "{{ .Values.spring.profiles }}"
             - name: "SPRING_DATASOURCE_URL"
-              value: "jdbc:mysql://{{ if .Values.mysql.enabled }}{{ .Release.Name }}-mysql{{ else }}{{ .Values.env.springDatasourceHost }}{{ end }}:3306/{{ .Values.env.springDatasourceDb }}"
+              {{- if .Values.env.springDatasourceUrl }}
+              value: "{{ .Values.env.springDatasourceUrl }}"
+              {{- else }}
+              value: "jdbc:mariadb://{{ if .Values.mysql.enabled }}{{ .Release.Name }}-mysql{{ else }}{{ .Values.env.springDatasourceHost }}{{ end }}:3306/{{ .Values.env.springDatasourceDb }}"
+              {{- end }}
             - name: "SPRING_APPLICATION_JSON"
               valueFrom:
                 secretKeyRef:
@@ -66,13 +70,13 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /VAADIN/themes/hawkbit/favicon.ico
+              path: /swagger-ui/index.html
               port: http
             initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
             timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
           readinessProbe:
             httpGet:
-              path: /VAADIN/themes/hawkbit/favicon.ico
+              path: /swagger-ui/index.html
               port: http
             initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
             timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}

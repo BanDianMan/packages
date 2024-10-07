@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019, 2023 Contributors to the Eclipse Foundation
+# Copyright (c) 2019 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -104,6 +104,14 @@ serviceType:
 #     sections "amqpMessagingNetworkExample" and "adapters.amqpMessagingNetworkSpec".
 messagingNetworkTypes:
 - "kafka"
+
+# useLegacyAmqpTraceContextFormat determines how OpenTelemetry trace context information
+# is stored in an AMQP 1.0 message sent to the AMQP Messaging Network. A "true" value here
+# configures the format used in previous Hono versions, while setting "false" chooses a more
+# generic format (compatible with e.g. Eclipse Ditto). Refer to
+# https://www.eclipse.org/hono/docs/admin-guide/hono-client-configuration/
+# for the documentation of the corresponding "useLegacyTraceContextFormat" Hono client property.
+useLegacyAmqpTraceContextFormat: true
 
 # Configuration properties for protocol adapters.
 adapters:
@@ -298,6 +306,8 @@ adapters:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     # extraVolumes contains additional kubernetes Volume definitions representing volumes
     # that can mounted into the container's file system.
@@ -425,6 +435,8 @@ adapters:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     # extraVolumes contains additional kubernetes Volume definitions representing volumes
     # that can mounted into the container's file system.
@@ -550,6 +562,8 @@ adapters:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     # extraVolumes contains additional kubernetes Volume definitions representing volumes
     # that can mounted into the container's file system.
@@ -677,6 +691,8 @@ adapters:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     # extraVolumes contains additional kubernetes Volume definitions representing volumes
     # that can mounted into the container's file system.
@@ -803,6 +819,8 @@ adapters:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     # extraVolumes contains additional kubernetes Volume definitions representing volumes
     # that can mounted into the container's file system.
@@ -926,6 +944,8 @@ authServer:
   pod:
     labels: {}
     annotations: {}
+    priorityClassName: ""
+    affinity: {}
 
   # extraVolumes contains additional kubernetes Volume definitions representing volumes
   # that can mounted into the container's file system.
@@ -1144,6 +1164,10 @@ deviceRegistryExample:
     # should be used for the example registry's persistent volume claim.
     # If not set, the cluster's default storage class is used.
     storageClass:
+    # storageSize contains the size of the storage that will be created using the
+    # storageClass or the cluster's default configuration.
+    # If no value is specified, the default value will be assumed.
+    storageSize: 1Mi
     # cmdLineArgs contains additional arguments to be passed to the container's CMD.
     cmdLineArgs: []
     # quarkusConfigLocations contains resources that the Quarkus based variant of the component should read
@@ -1188,6 +1212,8 @@ deviceRegistryExample:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     # The configMap to get additional environment variables from for this device registry.
     envConfigMap:
@@ -1245,9 +1271,12 @@ deviceRegistryExample:
       limits:
         cpu: "1"
         memory: "400Mi"
+
+
     # mongodb contains the configuration properties to connect to the MongoDB database instance.
     # If you would like to use an already existing MongoDB database instance, then configure
-    # the below section accordingly.
+    # the below section accordingly. Note that the values are processed via the 'tpl' function here,
+    # allowing for example the inclusion of the release name in the 'host' property.
     mongodb: {}
     # The host name or IP address of the MongoDB instance.
     # host:
@@ -1271,6 +1300,8 @@ deviceRegistryExample:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
   # jdbcBasedDeviceRegistry contains configuration properties specific to the
   # jdbc based device registry.
@@ -1331,6 +1362,8 @@ deviceRegistryExample:
     pod:
       labels: {}
       annotations: {}
+      priorityClassName: ""
+      affinity: {}
 
     registry:
       jdbc:
@@ -1424,7 +1457,7 @@ commandRouterService:
 
   # imageName contains the name (excluding registry)
   # of the container image to use for the Command Router service
-  imageName: "eclipse/hono-service-command-router"
+  imageName: "eclipse/hono-service-command-router-infinispan"
   # imageTag contains the tag of the container image to deploy.
   # If not specified, the value of the honoImagesTag property is used.
   # imageTag:
@@ -1484,6 +1517,8 @@ commandRouterService:
   pod:
     labels: {}
     annotations: {}
+    priorityClassName: ""
+    affinity: {}
 
   # extraVolumes contains additional kubernetes Volume definitions representing volumes
   # that can mounted into the container's file system.
@@ -1694,85 +1729,63 @@ kafkaMessagingClusterExample:
 kafka:
   # the name of the template (maintains the release name)
   nameOverride: "kafka"
-  # Set to false for productive setups. Topic management then needs to be provided externally.
-  autoCreateTopicsEnable: true
-  deleteTopicEnable: true
-  auth:
-    clientProtocol: "sasl_tls"
-    sasl:
-      jaas:
-        clientUsers:
-        - "hono"
-        clientPasswords:
-        - "hono-secret"
-        zookeeperUser: "zookeeperUser"
-        zookeeperPassword: "zookeeperPassword"
-    tls:
-      type: "pem"
-      pemChainIncluded: true
-      existingSecrets:
-      # Evaluated in kafka chart via tpl; kafka chart full name used here!
-      - '{{ include "hono.fullname" . }}-example-keys'
 
-  service:
-    ports:
-      client: 9092
-      internal: 9093
-      external: 9094
+  broker:
+    automountServiceAccountToken: true
 
-  replicaCount: 1
-  # Do not write data to a PersistentVolume by default.
-  # When setting this to true, make sure to also set "kafka.zookeeper.persistence.enabled" to true and
-  # make sure that Kafka is stopped cleanly using SIGTERM _before_ Zookeeper is stopped.
-  # Otherwise you will most likely run into issues like
-  # https://stackoverflow.com/questions/39759071/error-while-starting-kafka-broker
-  persistence:
-    enabled: false
+  controller:
+    replicaCount: 1
+    automountServiceAccountToken: true
+    extraConfig: |
+      auto.create.topics.enable=true
+      delete.topic.enable=true
+      group.initial.rebalance.delay.ms=0
+      offsets.topic.replication.factor=1
+      transaction.state.log.min.isr=1
+      transaction.state.log.replication.factor=1
+
+  listeners:
+    client:
+      protocol: "SASL_SSL"
+    external:
+      protocol: "SASL_SSL"
+
+  sasl:
+    client:
+      users:
+      - "hono"
+      passwords:
+      - "hono-secret"
+
+  tls:
+    type: "PEM"
+    pemChainIncluded: false
+    # Evaluated in kafka chart via tpl; kafka chart full name used here!
+    existingSecret: '{{ include "hono.fullname" . }}-example-keys'
+
   # Expose the Kafka service to be accessed from outside the cluster (LoadBalancer service).
   # To use service type NodePort instead of LoadBalancer, refer to
-  # https://github.com/bitnami/charts/tree/master/bitnami/kafka#accessing-kafka-brokers-from-outside-the-cluster
+  # https://github.com/bitnami/charts/blob/main/bitnami/kafka/README.md#accessing-kafka-brokers-from-outside-the-cluster
   externalAccess:
     enabled: true
     autoDiscovery:
       enabled: true
-    service:
-      type: "LoadBalancer"
-      ports:
-        external: 9094
-      # length of the array must match replicaCount
-      nodePorts:
-      - 32094
+    broker:
+      service:
+        type: "LoadBalancer"
+        ports:
+          external: 9094
+    controller:
+      service:
+        type: "LoadBalancer"
+        ports:
+          external: 9094
   serviceAccount:
     create: true
   rbac:
     # Note that this could require creating RBAC rules, for more information refer to
     # https://github.com/bitnami/charts/tree/master/bitnami/kafka#accessing-kafka-brokers-from-outside-the-cluster
     create: true
-  # limit Kafka JVM's memory consumption
-  heapOpts: "-Xms620M -Xmx620M"
-  resources:
-    requests:
-      memory: "800Mi"
-    limits:
-      memory: "800Mi"
-
-  zookeeper:
-    persistence:
-      enabled: false
-    auth:
-      client:
-        enabled: true
-        clientUser: "zookeeperUser"
-        clientPassword: "zookeeperPassword"
-        serverUsers: "zookeeperUser"
-        serverPasswords: "zookeeperPassword"
-    # limit Zookeeper JVM's memory consumption
-    heapSize: 400
-    resources:
-      requests:
-        memory: "256Mi"
-      limits:
-        memory: "500Mi"
 
 # amqpMessagingNetworkExample contains properties for configuring an example AMQP network
 # to be used for messaging if "messagingNetworkTypes" contains "amqp"
@@ -1845,6 +1858,10 @@ amqpMessagingNetworkExample:
           path: "/healthz"
         periodSeconds: 5
         initialDelaySeconds: 20
+
+    pod:
+      priorityClassName: ""
+      affinity: {}
 
     svc:
       annotations: {}
@@ -1942,6 +1959,10 @@ amqpMessagingNetworkExample:
           cpu: "1"
           memory: "600Mi"
 
+      pod:
+        priorityClassName: ""
+        affinity: {}
+
       # extraVolumes contains additional kubernetes Volume definitions representing volumes
       # that can mounted into the container's file system.
       # The syntax is defined in https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.24/#volume-v1-core
@@ -2012,6 +2033,11 @@ dataGridExample:
     limits:
       cpu: "1"
       memory: "200Mi"
+
+  pod:
+    priorityClassName: ""
+    affinity: {}
+
   # authUsername contains the name of the user that is authorized to connect to the example data grid.
   authUsername: "hono"
   # authPassword contains the secret of the user that is authorized to connect to the example data grid
@@ -2026,7 +2052,7 @@ jaegerBackendExample:
   enabled: false
   # allInOneImage contains the name (including tag)
   # of the container image to use for the example Jaeger back end.
-  allInOneImage: "jaegertracing/all-in-one:1.37"
+  allInOneImage: "jaegertracing/all-in-one:1.57"
   # [DEPRECATED: use probes instead] livenessProbeInitialDelaySeconds contains the value to use for the "initialDelaySeconds"
   # configuration property of the component's liveness probe.
   # The value of the top level "livenessProbeInitialDelaySeconds" property will be used if not set.
@@ -2062,6 +2088,8 @@ jaegerBackendExample:
   pod:
     labels: {}
     annotations: {}
+    priorityClassName: ""
+    affinity: {}
 
   # env contains environment variables to set for the Jaeger all-in-one container.
   # The default variables configure the container to keep up to 100000 traces in memory.
@@ -2093,7 +2121,7 @@ jaegerBackendExample:
 # to use for the OpenTelemetry collector agent sidecar containers.
 # These containers are deployed with Hono's components if the example Jaeger all-in-one
 # deployment is disabled and "otelCollectorAgentConfigMap" is not null.
-otelCollectorAgentImage: "otel/opentelemetry-collector:0.53.0"
+otelCollectorAgentImage: "otel/opentelemetry-collector:0.100.0"
 # otelCollectorAgentConfigMap can be used to specify the name of an existing ConfigMap
 # from which an OpenTelemetry collector configuration should be read.
 # If a ConfigMap name is given, an OpenTelemetry collector agent sidecar container will

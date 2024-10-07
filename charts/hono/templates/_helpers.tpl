@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019, 2022 Contributors to the Eclipse Foundation
+# Copyright (c) 2019 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -179,6 +179,20 @@ The scope passed in is expected to be a dict with keys
 {{- end }}
 
 {{/*
+Add affinity rules for Hono component pods.
+The scope passed in is expected to be a dict with keys
+- (mandatory) "componentConfig": the component's configuration properties from the values.yaml file
+*/}}
+{{- define "hono.pod.affinity" -}}
+{{- if .componentConfig.pod.affinity }}
+{{- with .componentConfig.pod.affinity }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Add annotations for Hono component deployments.
 The scope passed in is expected to be a dict with keys
 - (mandatory) "componentConfig": the component's configuration properties from the values.yaml file
@@ -252,6 +266,7 @@ messaging:
   certPath: {{ .dot.Values.adapters.amqpMessagingNetworkSpec.certPath | quote }}
   trustStorePath: {{ .dot.Values.adapters.amqpMessagingNetworkSpec.trustStorePath | quote }}
   hostnameVerificationRequired: {{ .dot.Values.adapters.amqpMessagingNetworkSpec.hostnameVerificationRequired }}
+  useLegacyTraceContextFormat: {{ .dot.Values.useLegacyAmqpTraceContextFormat }}
 {{- else }}
   {{- required ".Values.adapters.amqpMessagingNetworkSpec MUST be set if example AMQP Messaging Network is disabled" .dot.Values.adapters.amqpMessagingNetworkSpec | toYaml | nindent 2 }}
 {{- end }}
@@ -272,23 +287,21 @@ The scope passed in is expected to be a dict with keys
 kafka:
 {{- if .dot.Values.kafkaMessagingClusterExample.enabled }}
   commonClientConfig:
-    {{- $kafkaNameValues := pick .dot.Values.kafka "nameOverride" "fullnameOverride" }}
-    {{- $kafkaChartDotScope := dict "Release" .dot.Release "Chart" (dict "Name" "kafka") "Values" $kafkaNameValues }}
-    {{- $bootstrapServers := printf "%[1]s-0.%[1]s-headless:%d" ( include "hono.fullname" $kafkaChartDotScope ) ( .dot.Values.kafka.service.ports.client | int ) }}
+    {{- $bootstrapServers := printf "%[1]s-%[2]s-controller-headless:%d" .dot.Release.Name .dot.Values.kafka.nameOverride ( .dot.Values.kafka.service.ports.client | int ) }}
     bootstrap.servers: {{ $bootstrapServers | quote }}
-  {{- if eq .dot.Values.kafka.auth.clientProtocol "sasl_tls" }}
+  {{- if eq .dot.Values.kafka.listeners.client.protocol "SASL_SSL" }}
     security.protocol: "SASL_SSL"
     sasl.mechanism: "SCRAM-SHA-512"
-    sasl.jaas.config: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"{{ first .dot.Values.kafka.auth.sasl.jaas.clientUsers }}\" password=\"{{ first .dot.Values.kafka.auth.sasl.jaas.clientPasswords }}\";"
+    sasl.jaas.config: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"{{ first .dot.Values.kafka.sasl.client.users }}\" password=\"{{ first .dot.Values.kafka.sasl.client.passwords }}\";"
     ssl.truststore.type: "PEM"
     ssl.truststore.location: "/opt/hono/tls/ca.crt"
     ssl.endpoint.identification.algorithm: "" # Disables hostname verification. Don't do this in productive setups!
-  {{- else if eq .dot.Values.kafka.auth.clientProtocol "sasl" }}
+  {{- else if eq .dot.Values.kafka.listeners.client.protocol "SASL_PLAINTEXT" }}
     security.protocol: "SASL_PLAINTEXT"
     sasl.mechanism: "SCRAM-SHA-512"
-    sasl.jaas.config: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"{{ first .dot.Values.kafka.auth.sasl.jaas.clientUsers }}\" password=\"{{ first .dot.Values.kafka.auth.sasl.jaas.clientPasswords }}\";"
+    sasl.jaas.config: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"{{ first .dot.Values.kafka.sasl.client.users }}\" password=\"{{ first .dot.Values.kafka.sasl.client.passwords }}\";"
   {{- else }}
-    {{- required ".Values.kafka.auth.clientProtocol has unsupported value" nil }}
+    {{- required ".Values.kafka.listeners.client.protocol has unsupported value" nil }}
   {{- end }}
 {{- else }}
   {{- $bootstrapServers := dig "kafkaMessagingSpec" "commonClientConfig" "bootstrap.servers" "" . }}
@@ -312,13 +325,13 @@ The scope passed in is expected to be a dict with keys
 - (mandatory) "dot": the root scope (".")
 */}}
 {{- define "hono.kafkaConfigCheck" -}}
-  {{- if and (has "kafka" .dot.Values.messagingNetworkTypes) .dot.Values.kafkaMessagingClusterExample.enabled }}
+  {{- if and (has "kafka" .dot.Values.messagingNetworkTypes) .dot.Values.kafkaMessagingClusterExample.enabled .dot.Values.kafka.externalAccess.enabled }}
     {{- if .dot.Values.useLoadBalancer }}
-      {{- if not (eq .dot.Values.kafka.externalAccess.service.type "LoadBalancer") }}
-        {{- required ".Values.kafka.externalAccess.service.type MUST be 'LoadBalancer' if .Values.useLoadBalancer is true" nil }}
+      {{- if not (and (eq .dot.Values.kafka.externalAccess.controller.service.type "LoadBalancer") (eq .dot.Values.kafka.externalAccess.broker.service.type "LoadBalancer") )}}
+        {{- required ".Values.kafka.externalAccess.(controller|broker).service.type MUST be 'LoadBalancer' if .Values.useLoadBalancer is true" nil }}
       {{- end }}
-    {{- else if not (eq .dot.Values.kafka.externalAccess.service.type "NodePort") }}
-      {{- required ".Values.kafka.externalAccess.service.type MUST be 'NodePort' if .Values.useLoadBalancer is false" nil }}
+    {{- else if not (and (eq .dot.Values.kafka.externalAccess.controller.service.type "NodePort") (eq .dot.Values.kafka.externalAccess.broker.service.type "NodePort") )}}
+      {{- required ".Values.kafka.externalAccess.(controller|broker).service.type MUST be 'NodePort' if .Values.useLoadBalancer is false" nil }}
     {{- end }}
   {{- end }}
 {{- end }}
@@ -360,6 +373,7 @@ command:
   certPath: {{ .dot.Values.adapters.commandAndControlSpec.certPath | quote }}
   trustStorePath: {{ .dot.Values.adapters.commandAndControlSpec.trustStorePath | quote }}
   hostnameVerificationRequired: {{ .dot.Values.adapters.commandAndControlSpec.hostnameVerificationRequired }}
+  useLegacyTraceContextFormat: {{ .dot.Values.useLegacyAmqpTraceContextFormat }}
 {{- else }}
   {{- required ".Values.adapters.commandAndControlSpec MUST be set if example AMQP Messaging Network is disabled" .dot.Values.adapters.commandAndControlSpec | toYaml | nindent 2 }}
 {{- end -}}
@@ -572,7 +586,6 @@ Adds volume mounts to a component's container.
 The scope passed in is expected to be a dict with keys
 - (mandatory) "name": the name of the component
 - (mandatory) "componentConfig": the component's configuration properties as defined in .Values
-- (optional) "dot": the root scope (".")
 - (optional) "configMountPath": the mount path to use for the component's config secret
                                 instead of the default "/opt/hono/config"
 */}}
@@ -644,6 +657,17 @@ The scope passed in is expected to be a dict with keys
 {{- end }}
 {{- with .componentConfig.extraVolumes }}
 {{ . | toYaml }}
+{{- end }}
+{{- end }}
+
+{{/*
+Adds a priority class name to a component's pod spec.
+The scope passed in is expected to be a dict with keys
+- (mandatory) "componentConfig": the component's configuration properties as defined in .Values
+*/}}
+{{- define "hono.pod.priorityClassName" }}
+{{- if .componentConfig.pod.priorityClassName }}
+priorityClassName: {{ .componentConfig.pod.priorityClassName | quote }}
 {{- end }}
 {{- end }}
 

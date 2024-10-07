@@ -15,7 +15,7 @@
 
 image:
   repository: "hawkbit/hawkbit-update-server"
-  tag: 0.3.0M6-mysql
+  tag: 0.5.0-mysql
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -58,6 +58,7 @@ readinessProbe:
 
 ingress:
   enabled: false
+  ingressClassName:
   annotations: {}
     # ingress.kubernetes.io/ssl-redirect: "true"
     # kubernetes.io/tls-acme: "true"
@@ -83,6 +84,8 @@ fileStorage:
 env:
   springDatasourceHost: "hawkbit-mysql"
   springDatasourceDb: "hawkbit"
+  # if springDatasourceUrl is set override default mysql db url
+  springDatasourceUrl: ""
   springRabbitmqHost: "hawkbit-rabbitmq"
   springRabbitmqUsername: "hawkbit"
   springRabbitmqPassword: "hawkbit"
@@ -173,17 +176,16 @@ config:
 ## ref: https://github.com/bitnami/charts/blob/master/bitnami/mysql/values.yaml
 mysql:
   enabled: true
-  master:
+  primary:
     persistence:
       enabled: true
   volumePermissions:
     enabled: true
-  db:
-    user: hawkbit
+  architecture: standalone
+  auth:
+    username: hawkbit
     password: hawkbit
-    name: hawkbit
-  replication:
-    enabled: false
+    database: hawkbit
   metrics:
     enabled: true
 

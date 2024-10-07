@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2022 Contributors to the Eclipse Foundation
+# Copyright (c) 2023 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -10,16 +10,8 @@
 #
 # SPDX-License-Identifier: EPL-2.0
 #
-platform: openshift
-
-kafka:
-  podSecurityContext:
-    enabled: false
-  containerSecurityContext:
-    enabled: false
-
-  zookeeper:
-    podSecurityContext:
-      enabled: false
-    containerSecurityContext:
-      enabled: false
+{{- $args := dict "dot" . "name" "adapter" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  {{- include "hono.metadata" $args | nindent 2 }}

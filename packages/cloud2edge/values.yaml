@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2020, 2023 Contributors to the Eclipse Foundation
+# Copyright (c) 2020 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -24,19 +24,25 @@ honoConnection:
 hono:
 
   kafka:
-    auth:
-      sasl:
-        jaas:
-          clientUsers:
-            - "hono"
-            - "ditto-c2e"
-          clientPasswords:
-            - "hono-secret"
-            - "verysecret"
+    sasl:
+      client:
+        users:
+          - "hono"
+          - "ditto-c2e"
+        passwords:
+          - "hono-secret"
+          - "verysecret"
+    externalAccess:
+      broker:
+        service:
+          type: NodePort
+      controller:
+        service:
+          type: NodePort
 
   livenessProbeInitialDelaySeconds: 900
   readinessProbeInitialDelaySeconds: 45
-  useLoadBalancer: true
+  useLoadBalancer: false
 
   prometheus:
     createInstance: false
@@ -87,7 +93,10 @@ hono:
         requests:
           cpu: 200m
       mongodb:
-        host: ditto-mongodb
+        # Note that the host value expression is evaluated in the context of the Hono chart. As the ditto chart values
+        # can't be accessed from the Hono chart context (specifically ditto.mongodb), we have to assume that
+        # the default ditto.mongodb name is used (i.e. that ditto.mongodb.nameOverride or fullnameOverride isn't set).
+        host: '{{ .Release.Name }}-mongodb'
         port: 27017
         dbName: hono
 
@@ -114,65 +123,49 @@ ditto:
         user: ditto
         password: ditto
 
-  # do not set cpu limits for Ditto to avoid CFS scheduler limits
-  # ref: https://doc.akka.io/docs/akka/snapshot/additional/deploy.html#in-kubernetes
   connectivity:
     resources:
-      requests:
-        cpu: 200m
-      limits:
-        memory: "1Gi"
+      cpu: 0.2
+      memoryMi: 1024
 
   gateway:
     resources:
-      requests:
-        cpu: 200m
-      limits:
-        memory: "768Mi"
+      cpu: 0.2
+      memoryMi: 768
 
   nginx:
     service:
       type: NodePort
     resources:
-      requests:
-        cpu: 50m
-      limits:
-        cpu: 150m
-        memory: "32Mi"
+      cpu: 0.05
+      memoryMi: 32
 
   policies:
     resources:
-      requests:
-        cpu: 200m
-      limits:
-        memory: "768Mi"
+      cpu: 0.2
+      memoryMi: 768
 
   swaggerui:
     resources:
-      requests:
-        cpu: 50m
-      limits:
-        cpu: 100m
-        memory: "32Mi"
+      cpu: 0.05
+      memoryMi: 32
 
   things:
     resources:
-      requests:
-        cpu: 200m
-      limits:
-        memory: "768Mi"
+      cpu: 0.2
+      memoryMi: 768
 
   thingsSearch:
     resources:
-      requests:
-        cpu: 200m
-      limits:
-        memory: "768Mi"
+      cpu: 0.2
+      memoryMi: 768
+
+  dittoui:
+    resources:
+      cpu: 0.05
+      memoryMi: 32
 
   mongodb:
-    # usage of default name (including release name) not supported in hono.deviceRegistryExample.mongoDBBasedDeviceRegistry.mongodb for now
-    # - therefore using fixed name here
-    fullnameOverride: ditto-mongodb
     resources:
       requests:
         cpu: 150m
@@ -180,33 +173,11 @@ ditto:
       limits:
         cpu: 250m
         memory: "512Mi"
-    # apply workaround for high CPU/memory usage of liveness/readiness check - see https://github.com/bitnami/charts/issues/10264
-    # using deprecated 'mongo' executable (still available in mongodb chart 12.x) showing much lower CPU/memory usage;
-    # needs to be adapted if TLS is enabled - see https://github.com/bitnami/charts/blob/2246e0540e621cd529e32ea2c7c2724c0fbc066a/bitnami/mongodb/templates/standalone/dep-sts.yaml#L285
     livenessProbe:
-      enabled: false
-    customLivenessProbe:
-      exec:
-        command:
-          - mongo
-          - --disableImplicitSessions
-          - --eval
-          - "db.adminCommand('ping')"
-      failureThreshold: 6
-      initialDelaySeconds: 30
-      periodSeconds: 20
-      successThreshold: 1
-      timeoutSeconds: 10
+      initialDelaySeconds: 40
+      periodSeconds: 30
+      timeoutSeconds: 15
     readinessProbe:
-      enabled: false
-    customReadinessProbe:
-      exec:
-        command:
-          - sh
-          - '-c'
-          - mongo --disableImplicitSessions --eval 'db.hello().isWritablePrimary || db.hello().secondary' | grep -q 'true'
-      failureThreshold: 6
-      initialDelaySeconds: 5
-      periodSeconds: 10
-      successThreshold: 1
-      timeoutSeconds: 5
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 13

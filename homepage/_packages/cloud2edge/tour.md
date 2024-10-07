@@ -41,7 +41,9 @@ chmod u+x setCloud2EdgeEnv.sh
 
 RELEASE=c2e
 NS=cloud2edge
-eval $(./setCloud2EdgeEnv.sh $RELEASE $NS)
+# file path that the Hono example truststore will be written to
+TRUSTSTORE_PATH=/tmp/c2e_hono_truststore.pem
+eval $(./setCloud2EdgeEnv.sh $RELEASE $NS $TRUSTSTORE_PATH)
 {% endclipboard %}
 {% endvariant %}
 
@@ -67,7 +69,7 @@ echo $DITTO_API_BASE_URL
 {% endclipboard %}
 prints out the URL where to access the Ditto UI and Ditto API documentation.
 
-In the Ditto UI, click on the `Environments` link at the top and then the `Environment JSON` tab. Clicking on "Edit" lets you enter an arbitrary Name (e.g. `default`)
+In the Ditto UI, click on the `Environments` link at the top and then the `JSON` tab. Clicking on "Create" lets you enter an arbitrary Name (e.g. `default`)
 and below a JSON value, to be taken from the output of the following command.
 {% clipboard %}
 echo $DITTO_UI_ENV_JSON
@@ -84,12 +86,22 @@ The demo device's digital twin supports a temperature property which will be set
 by means of the following command:
 
 {% clipboard %}
-curl -i -k -u demo-device@org.eclipse.packages.c2e:demo-secret -H 'application/json' --data-binary '{
+curl -i -k -u demo-device@org.eclipse.packages.c2e:demo-secret -H 'Content-Type: application/json' --data-binary '{
   "topic": "org.eclipse.packages.c2e/demo-device/things/twin/commands/modify",
   "headers": {},
   "path": "/features/temperature/properties/value",
   "value": 45
 }' ${HTTP_ADAPTER_BASE_URL:?}/telemetry
+{% endclipboard %}
+
+In order to publish the telemetry data via MQTT, the `mosquitto_pub` command can be used:
+{% clipboard %}
+mosquitto_pub -d -h ${MQTT_ADAPTER_IP} -p ${MQTT_ADAPTER_PORT_MQTTS} -u demo-device@org.eclipse.packages.c2e -P demo-secret ${MOSQUITTO_OPTIONS} -t telemetry -m '{
+"topic": "org.eclipse.packages.c2e/demo-device/things/twin/commands/modify",
+"headers": {},
+"path": "/features/temperature/properties/value",
+"value": 45
+}'
 {% endclipboard %}
 
 ## Retrieving the digital twin's current state
@@ -131,16 +143,32 @@ curl -i -X POST -u ditto:ditto -H 'Content-Type: application/json' -w '\n' --dat
  
 ### Receiving a command at the device
 
-The device may receive a command by specifying a `ttd` when e.g. sending telemetry via HTTP to Hono:
+#### Via MQTT
+
+With the `mosquitto_sub` command, an MQTT subscription on the `command///req/#` MQTT topic can be created, simulating
+an MQTT device connecting to the Hono MQTT adapter and subscribing for command messages. 
+The following command can be used to create the subscription:
 
 {% clipboard %}
-curl -i -k -u demo-device@org.eclipse.packages.c2e:demo-secret -H 'hono-ttd: 50' -H 'application/json' -w '\n' --data '{
-  "topic": "org.eclipse.packages.c2e/demo-device/things/twin/commands/modify",
-  "headers": {},
-  "path": "/features/temperature/properties/value",
-  "value": 45
-}' ${HTTP_ADAPTER_BASE_URL:?}/telemetry
+mosquitto_sub -v -h ${MQTT_ADAPTER_IP} -p ${MQTT_ADAPTER_PORT_MQTTS} -u demo-device@org.eclipse.packages.c2e -P demo-secret ${MOSQUITTO_OPTIONS} -t command///req/#
 {% endclipboard %}
+
+With this, commands will be received for as long as `mosquitto_sub` is kept running.
+
+#### Via HTTP
+
+For the device to receive a command via the HTTP adapter, the device may send a telemetry message with the `hono-ttd` header.
+The header value specifies the number of seconds to wait for a command.
+If no telemetry data shall be sent along with the request, the `application/vnd.eclipse-hono-empty-notification` header can be used:
+
+{% clipboard %}
+curl -i -X POST -k -u demo-device@org.eclipse.packages.c2e:demo-secret -H 'hono-ttd: 50' \
+  -H 'Content-Type: application/vnd.eclipse-hono-empty-notification' ${HTTP_ADAPTER_BASE_URL:?}/telemetry
+{% endclipboard %}
+
+Note that in contrast to the MQTT example above with its long-running connection, sending the HTTP telemetry request
+message with the `hono-ttd` header will only return at most one command message in the HTTP response. If no command message
+got sent during the waiting period specified via the `hono-ttd` header, an empty response is returned.
 
 An example response for the device containing the command sent via the Ditto twin (see previous step for sending the 
 command) is:
@@ -166,7 +194,7 @@ The response has to be correlated twice:
   with the `"correlation-id"` value from the received Ditto Protocol message's `"headers"` object.
 
 {% clipboard %}
-curl -i -k -X PUT -u demo-device@org.eclipse.packages.c2e:demo-secret -H "content-type: application/json" --data-binary '{
+curl -i -k -X PUT -u demo-device@org.eclipse.packages.c2e:demo-secret -H "Content-Type: application/json" --data-binary '{
   "topic": "org.eclipse.packages.c2e/demo-device/things/live/messages/start-watering",
   "headers": {
     "content-type": "application/json",
@@ -298,7 +326,7 @@ DITTO_DEVOPS_PWD=$(kubectl --namespace ${NS} get secret ${RELEASE}-ditto-gateway
 {% endclipboard %}
 
 Now, the connection can be created. By default, a Kafka based connection is to be used. If the cloud2edge chart has been deployed with the
-[AMQP messaging profile](https://github.com/eclipse/packages/blob/master/packages/cloud2edge/profileAmqpMessaging.yaml), a connection of type `amqp-10` needs to be created.
+[AMQP messaging profile](https://github.com/eclipse/packages/blob/master/packages/cloud2edge/profileAmqpMessaging-values.yaml), a connection of type `amqp-10` needs to be created.
 
 {% variants %}
 
@@ -312,171 +340,161 @@ KAFKA_CERT=$(kubectl --namespace ${NS} get secret ${RELEASE}-kafka-example-keys 
 Then, create the connection:
 
 {% clipboard %}
-curl -i -X POST -u devops:${DITTO_DEVOPS_PWD} -H 'Content-Type: application/json' --data '{
-  "targetActorSelection": "/system/sharding/connection",
-  "headers": {
-    "aggregate": false
-  },
-  "piggybackCommand": {
-    "type": "connectivity.commands:createConnection",
-    "connection": {
-      "id": "hono-kafka-connection-for-'"${HONO_TENANT/./_}"'",
-      "name": "[Hono/Kafka] '"${HONO_TENANT}"'",
-      "connectionType": "kafka",
-      "connectionStatus": "open",
-      "uri": "ssl://ditto-c2e:verysecret@'"${RELEASE}"'-kafka:9092",
-      "ca": "'"${KAFKA_CERT}"'",
-      "failoverEnabled": true,
-      "sources": [
-        {
-          "addresses": [
-            "hono.telemetry.'"${HONO_TENANT}"'"
-          ],
-          "consumerCount": 1,
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "qos": 0,
-          "enforcement": {
-            "input": "{{ header:device_id }}",
-            "filters": [
-              "{{ entity:id }}"
-            ]
-          },
-          "headerMapping": {},
-          "payloadMapping": [],
-          "replyTarget": {
-            "enabled": true,
-            "address": "hono.command.'"${HONO_TENANT}"'/{{ thing:id }}",
-            "headerMapping": {
-              "device_id": "{{ thing:id }}",
-              "subject": "{{ header:subject | fn:default(topic:action-subject) | fn:default(topic:criterion) }}-response",
-              "correlation-id": "{{ header:correlation-id }}"
-            },
-            "expectedResponseTypes": [
-              "response",
-              "error"
-            ]
-          },
-          "acknowledgementRequests": {
-            "includes": [],
-            "filter": "fn:delete()"
-          },
-          "declaredAcks": []
-        },
-        {
-          "addresses": [
-            "hono.event.'"${HONO_TENANT}"'"
-          ],
-          "consumerCount": 1,
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "qos": 1,
-          "enforcement": {
-            "input": "{{ header:device_id }}",
-            "filters": [
-              "{{ entity:id }}"
-            ]
-          },
-          "headerMapping": {},
-          "payloadMapping": [],
-          "replyTarget": {
-            "enabled": true,
-            "address": "hono.command.'"${HONO_TENANT}"'/{{ thing:id }}",
-            "headerMapping": {
-              "device_id": "{{ thing:id }}",
-              "subject": "{{ header:subject | fn:default(topic:action-subject) | fn:default(topic:criterion) }}-response",
-              "correlation-id": "{{ header:correlation-id }}"
-            },
-            "expectedResponseTypes": [
-              "response",
-              "error"
-            ]
-          },
-          "acknowledgementRequests": {
-            "includes": []
-          },
-          "declaredAcks": []
-        },
-        {
-          "addresses": [
-            "hono.command_response.'"${HONO_TENANT}"'"
-          ],
-          "consumerCount": 1,
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "qos": 0,
-          "enforcement": {
-            "input": "{{ header:device_id }}",
-            "filters": [
-              "{{ entity:id }}"
-            ]
-          },
-          "headerMapping": {
-            "correlation-id": "{{ header:correlation-id }}",
-            "status": "{{ header:status }}"
-          },
-          "payloadMapping": [],
-          "replyTarget": {
-            "enabled": false,
-            "expectedResponseTypes": [
-              "response",
-              "error"
-            ]
-          },
-          "acknowledgementRequests": {
-            "includes": [],
-            "filter": "fn:delete()"
-          },
-          "declaredAcks": []
-        }
+curl -i -X PUT -u devops:${DITTO_DEVOPS_PWD} -H 'Content-Type: application/json' --data '{
+  "name": "[Hono/Kafka] '"${HONO_TENANT}"'",
+  "connectionType": "kafka",
+  "connectionStatus": "open",
+  "uri": "ssl://ditto-c2e:verysecret@'"${RELEASE}"'-kafka:9092",
+  "ca": "'"${KAFKA_CERT}"'",
+  "failoverEnabled": true,
+  "sources": [
+    {
+      "addresses": [
+        "hono.telemetry.'"${HONO_TENANT}"'"
       ],
-      "targets": [
-        {
-          "address": "hono.command.'"${HONO_TENANT}"'/{{ thing:id }}",
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "headerMapping": {
-            "device_id": "{{ thing:id }}",
-            "subject": "{{ header:subject | fn:default(topic:action-subject) }}",
-            "correlation-id": "{{ header:correlation-id }}",
-            "response-required": "{{ header:response-required }}"
-          },
-          "topics": [
-            "_/_/things/live/commands",
-            "_/_/things/live/messages"
-          ]
-        },
-        {
-          "address": "hono.command.'"${HONO_TENANT}"'/{{thing:id}}",
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "topics": [
-            "_/_/things/twin/events",
-            "_/_/things/live/events"
-          ],
-          "headerMapping": {
-            "device_id": "{{ thing:id }}",
-            "subject": "{{ header:subject | fn:default(topic:action-subject) }}",
-            "correlation-id": "{{ header:correlation-id }}"
-          }
-        }
+      "consumerCount": 1,
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
       ],
-      "specificConfig": {
-        "saslMechanism": "plain",
-        "bootstrapServers": "'"${RELEASE}"'-kafka:9092",
-        "groupId": "'"${HONO_TENANT}"'_{{ connection:id }}"
+      "qos": 0,
+      "enforcement": {
+        "input": "{%raw%}{{ header:device_id }}{%endraw%}",
+        "filters": [
+          "{%raw%}{{ entity:id }}{%endraw%}"
+        ]
       },
-      "clientCount": 1,
-      "failoverEnabled": true,
-      "validateCertificates": true
+      "headerMapping": {},
+      "payloadMapping": [],
+      "replyTarget": {
+        "enabled": true,
+        "address": "hono.command.'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
+        "headerMapping": {
+          "device_id": "{%raw%}{{ thing:id }}{%endraw%}",
+          "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) | fn:default(topic:criterion) }}{%endraw%}-response",
+          "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}"
+        },
+        "expectedResponseTypes": [
+          "response",
+          "error"
+        ]
+      },
+      "acknowledgementRequests": {
+        "includes": [],
+        "filter": "fn:delete()"
+      },
+      "declaredAcks": []
+    },
+    {
+      "addresses": [
+        "hono.event.'"${HONO_TENANT}"'"
+      ],
+      "consumerCount": 1,
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "qos": 1,
+      "enforcement": {
+        "input": "{%raw%}{{ header:device_id }}{%endraw%}",
+        "filters": [
+          "{%raw%}{{ entity:id }}{%endraw%}"
+        ]
+      },
+      "headerMapping": {},
+      "payloadMapping": [],
+      "replyTarget": {
+        "enabled": true,
+        "address": "hono.command.'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
+        "headerMapping": {
+          "device_id": "{%raw%}{{ thing:id }}{%endraw%}",
+          "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) | fn:default(topic:criterion) }}{%endraw%}-response",
+          "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}"
+        },
+        "expectedResponseTypes": [
+          "response",
+          "error"
+        ]
+      },
+      "acknowledgementRequests": {
+        "includes": []
+      },
+      "declaredAcks": []
+    },
+    {
+      "addresses": [
+        "hono.command_response.'"${HONO_TENANT}"'"
+      ],
+      "consumerCount": 1,
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "qos": 0,
+      "enforcement": {
+        "input": "{%raw%}{{ header:device_id }}{%endraw%}",
+        "filters": [
+          "{%raw%}{{ entity:id }}{%endraw%}"
+        ]
+      },
+      "headerMapping": {
+        "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
+        "status": "{%raw%}{{ header:status }}{%endraw%}"
+      },
+      "payloadMapping": [],
+      "replyTarget": {
+        "enabled": false,
+        "expectedResponseTypes": [
+          "response",
+          "error"
+        ]
+      },
+      "acknowledgementRequests": {
+        "includes": [],
+        "filter": "fn:delete()"
+      },
+      "declaredAcks": []
     }
-  }
-}' ${DITTO_API_BASE_URL:?}/devops/piggyback/connectivity
+  ],
+  "targets": [
+    {
+      "address": "hono.command.'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "headerMapping": {
+        "device_id": "{%raw%}{{ thing:id }}{%endraw%}",
+        "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) }}{%endraw%}",
+        "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
+        "response-required": "{%raw%}{{ header:response-required }}{%endraw%}"
+      },
+      "topics": [
+        "_/_/things/live/commands",
+        "_/_/things/live/messages"
+      ]
+    },
+    {
+      "address": "hono.command.'"${HONO_TENANT}"'/{%raw%}{{thing:id}}{%endraw%}",
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "topics": [
+        "_/_/things/twin/events",
+        "_/_/things/live/events"
+      ],
+      "headerMapping": {
+        "device_id": "{%raw%}{{ thing:id }}{%endraw%}",
+        "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) }}{%endraw%}",
+        "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}"
+      }
+    }
+  ],
+  "specificConfig": {
+    "saslMechanism": "plain",
+    "bootstrapServers": "'"${RELEASE}"'-kafka:9092",
+    "groupId": "'"${HONO_TENANT}"'_{%raw%}{{ connection:id }}{%endraw%}"
+  },
+  "clientCount": 1,
+  "failoverEnabled": true,
+  "validateCertificates": true
+}' ${DITTO_API_BASE_URL:?}/api/2/connections/hono-kafka-connection-for-${HONO_TENANT//./_}
 {% endclipboard %}
 
 {% endvariant %}
@@ -484,117 +502,107 @@ curl -i -X POST -u devops:${DITTO_DEVOPS_PWD} -H 'Content-Type: application/json
 {% variant AMQP Messaging %}
 
 {% clipboard %}
-curl -i -X POST -u devops:${DITTO_DEVOPS_PWD} -H 'Content-Type: application/json' --data '{
-  "targetActorSelection": "/system/sharding/connection",
-  "headers": {
-    "aggregate": false
-  },
-  "piggybackCommand": {
-    "type": "connectivity.commands:createConnection",
-    "connection": {
-      "id": "hono-amqp-connection-for-'"${HONO_TENANT/./_}"'",
-      "name": "[Hono/AMQP1.0] '"${HONO_TENANT}"'",
-      "connectionType": "amqp-10",
-      "connectionStatus": "open",
-      "uri": "amqp://consumer%40HONO:verysecret@'"${RELEASE}"'-dispatch-router-ext:15672",
-      "failoverEnabled": true,
-      "sources": [
-        {
-          "addresses": [
-            "telemetry/'"${HONO_TENANT}"'",
-            "event/'"${HONO_TENANT}"'"
-          ],
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "enforcement": {
-            "input": "{%raw%}{{ header:device_id }}{%endraw%}",
-            "filters": [
-              "{%raw%}{{ entity:id }}{%endraw%}"
-            ]
-          },
-          "headerMapping": {
-            "hono-device-id": "{%raw%}{{ header:device_id }}{%endraw%}",
-            "content-type": "{%raw%}{{ header:content-type }}{%endraw%}"
-          },
-          "replyTarget": {
-            "enabled": true,
-            "address": "{%raw%}{{ header:reply-to }}{%endraw%}",
-            "headerMapping": {
-              "to": "command/'"${HONO_TENANT}"'/{%raw%}{{ header:hono-device-id }}{%endraw%}",
-              "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) | fn:default(topic:criterion) }}{%endraw%}-response",
-              "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
-              "content-type": "{%raw%}{{ header:content-type | fn:default('"'"'application/vnd.eclipse.ditto+json'"'"') }}{%endraw%}"
-            },
-            "expectedResponseTypes": [
-              "response",
-              "error"
-            ]
-          },
-          "acknowledgementRequests": {
-            "includes": [],
-            "filter": "fn:filter(header:qos,'"'"'ne'"'"','"'"'0'"'"')"
-          }
-        },
-        {
-          "addresses": [
-            "command_response/'"${HONO_TENANT}"'/replies"
-          ],
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "headerMapping": {
-            "content-type": "{%raw%}{{ header:content-type }}{%endraw%}",
-            "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
-            "status": "{%raw%}{{ header:status }}{%endraw%}"
-          },
-          "replyTarget": {
-            "enabled": false,
-            "expectedResponseTypes": [
-              "response",
-              "error"
-            ]
-          }
-        }
+curl -i -X PUT -u devops:${DITTO_DEVOPS_PWD} -H 'Content-Type: application/json' --data '{
+  "name": "[Hono/AMQP1.0] '"${HONO_TENANT}"'",
+  "connectionType": "amqp-10",
+  "connectionStatus": "open",
+  "uri": "amqp://consumer%40HONO:verysecret@'"${RELEASE}"'-hono-dispatch-router-ext:15672",
+  "failoverEnabled": true,
+  "sources": [
+    {
+      "addresses": [
+        "telemetry/'"${HONO_TENANT}"'",
+        "event/'"${HONO_TENANT}"'"
       ],
-      "targets": [
-        {
-          "address": "command/'"${HONO_TENANT}"'",
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "topics": [
-            "_/_/things/live/commands",
-            "_/_/things/live/messages"
-          ],
-          "headerMapping": {
-            "to": "command/'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
-            "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) }}{%endraw%}",
-            "content-type": "{%raw%}{{ header:content-type | fn:default('"'"'application/vnd.eclipse.ditto+json'"'"') }}{%endraw%}",
-            "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
-            "reply-to": "{%raw%}{{ fn:default('"'"'command_response/'"${HONO_TENANT}"'/replies'"'"') | fn:filter(header:response-required,'"'"'ne'"'"','"'"'false'"'"') }}{%endraw%}"
-          }
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "enforcement": {
+        "input": "{%raw%}{{ header:device_id }}{%endraw%}",
+        "filters": [
+          "{%raw%}{{ entity:id }}{%endraw%}"
+        ]
+      },
+      "headerMapping": {
+        "hono-device-id": "{%raw%}{{ header:device_id }}{%endraw%}",
+        "content-type": "{%raw%}{{ header:content-type }}{%endraw%}"
+      },
+      "replyTarget": {
+        "enabled": true,
+        "address": "{%raw%}{{ header:reply-to }}{%endraw%}",
+        "headerMapping": {
+          "to": "command/'"${HONO_TENANT}"'/{%raw%}{{ header:hono-device-id }}{%endraw%}",
+          "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) | fn:default(topic:criterion) }}{%endraw%}-response",
+          "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
+          "content-type": "{%raw%}{{ header:content-type | fn:default('"'"'application/vnd.eclipse.ditto+json'"'"') }}{%endraw%}"
         },
-        {
-          "address": "command/'"${HONO_TENANT}"'",
-          "authorizationContext": [
-            "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
-          ],
-          "topics": [
-            "_/_/things/twin/events",
-            "_/_/things/live/events"
-          ],
-          "headerMapping": {
-            "to": "command/'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
-            "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) }}{%endraw%}",
-            "content-type": "{%raw%}{{ header:content-type | fn:default('"'"'application/vnd.eclipse.ditto+json'"'"') }}{%endraw%}",
-            "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}"
-          }
-        }
-      ]
+        "expectedResponseTypes": [
+          "response",
+          "error"
+        ]
+      },
+      "acknowledgementRequests": {
+        "includes": [],
+        "filter": "fn:filter(header:qos,'"'"'ne'"'"','"'"'0'"'"')"
+      }
+    },
+    {
+      "addresses": [
+        "command_response/'"${HONO_TENANT}"'/replies"
+      ],
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "headerMapping": {
+        "content-type": "{%raw%}{{ header:content-type }}{%endraw%}",
+        "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
+        "status": "{%raw%}{{ header:status }}{%endraw%}"
+      },
+      "replyTarget": {
+        "enabled": false,
+        "expectedResponseTypes": [
+          "response",
+          "error"
+        ]
+      }
     }
-  }
-}' ${DITTO_API_BASE_URL:?}/devops/piggyback/connectivity
+  ],
+  "targets": [
+    {
+      "address": "command/'"${HONO_TENANT}"'",
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "topics": [
+        "_/_/things/live/commands",
+        "_/_/things/live/messages"
+      ],
+      "headerMapping": {
+        "to": "command/'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
+        "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) }}{%endraw%}",
+        "content-type": "{%raw%}{{ header:content-type | fn:default('"'"'application/vnd.eclipse.ditto+json'"'"') }}{%endraw%}",
+        "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}",
+        "reply-to": "{%raw%}{{ fn:default('"'"'command_response/'"${HONO_TENANT}"'/replies'"'"') | fn:filter(header:response-required,'"'"'ne'"'"','"'"'false'"'"') }}{%endraw%}"
+      }
+    },
+    {
+      "address": "command/'"${HONO_TENANT}"'",
+      "authorizationContext": [
+        "pre-authenticated:hono-connection-'"${HONO_TENANT}"'"
+      ],
+      "topics": [
+        "_/_/things/twin/events",
+        "_/_/things/live/events"
+      ],
+      "headerMapping": {
+        "to": "command/'"${HONO_TENANT}"'/{%raw%}{{ thing:id }}{%endraw%}",
+        "subject": "{%raw%}{{ header:subject | fn:default(topic:action-subject) }}{%endraw%}",
+        "content-type": "{%raw%}{{ header:content-type | fn:default('"'"'application/vnd.eclipse.ditto+json'"'"') }}{%endraw%}",
+        "correlation-id": "{%raw%}{{ header:correlation-id }}{%endraw%}"
+      }
+    }
+  ]
+}' ${DITTO_API_BASE_URL:?}/api/2/connections/hono-amqp-connection-for-${HONO_TENANT//./_}
 {% endclipboard %}
 
 {% endvariant %}
@@ -701,7 +709,7 @@ To send a telemetry message via Hono's HTTP protocol adapter and thereby update 
 following command can be used:
 
 {% clipboard %}
-curl -i -k -u my-auth-id-1@my-tenant:my-password -H 'application/json' --data-binary '{
+curl -i -k -u my-auth-id-1@my-tenant:my-password -H 'Content-Type: application/json' --data-binary '{
   "topic": "org.acme/my-device-1/things/twin/commands/modify",
   "headers": {},
   "path": "/features/temperature/properties/value",

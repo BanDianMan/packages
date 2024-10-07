@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2019, 2023 Contributors to the Eclipse Foundation
+# Copyright (c) 2019 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -15,9 +15,9 @@ name: hono
 description: |
   Eclipse Hono™ provides remote service interfaces for connecting large numbers of IoT devices to a back end and
   interacting with them in a uniform way regardless of the device communication protocol.
-version: 2.5.0
+version: 2.6.3
 # Version of Hono being deployed by the chart
-appVersion: 2.4.0
+appVersion: 2.6.0
 keywords:
 - iot-chart
 - IoT
@@ -27,12 +27,10 @@ keywords:
 home: https://www.eclipse.org/hono/
 sources:
 - https://github.com/eclipse-hono/hono
-icon: https://www.eclipse.org/hono/favicon/favicon-48x48.png
+icon: https://eclipse.dev/hono/img/hono-logo_image.svg
 maintainers:
 - name: dejanb
   email: dbosanac@redhat.com
-- name: ctron
-  email: jreimann@redhat.com
 - name: sophokles73
   email: kai.hudalla@bosch.io
 dependencies:
@@ -45,10 +43,10 @@ dependencies:
   repository: "https://grafana.github.io/helm-charts"
   condition: "grafana.enabled"
 - name: "mongodb"
-  repository: "https://charts.bitnami.com/bitnami"
-  version: "~13.16.x"
+  repository: "oci://registry-1.docker.io/bitnamicharts"
+  version: "~13.x"
   condition: "mongodb.createInstance"
 - name: "kafka"
-  repository: "https://charts.bitnami.com/bitnami"
-  version: "^20.x"
+  repository: "oci://registry-1.docker.io/bitnamicharts"
+  version: "^26.8"
   condition: "kafkaMessagingClusterExample.enabled"

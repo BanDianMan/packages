@@ -17,7 +17,7 @@ In addition, a Kubernetes cluster to install the chart to is required.
 See the corresponding section on the [IoT Packages prerequisites](https://www.eclipse.org/packages/prereqs/#kubernetes-cluster)
 page for information on how to set up a cluster suitable for running Hono.
 
-The Helm chart is being tested to successfully install on the five most recent Kubernetes versions.
+The Helm chart is being tested to successfully install on the four most recent Kubernetes versions.
 
 ## Installing the chart
 
@@ -48,19 +48,17 @@ Kubernetes *Services*. The following command lists all services and their endpoi
 kubectl get service -n hono
 
 NAME                                            TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)                           AGE
-eclipse-hono-adapter-amqp                       LoadBalancer   10.99.197.79    127.0.0.1     5672:32672/TCP,5671:32671/TCP     2m30s
-eclipse-hono-adapter-http                       LoadBalancer   10.102.247.45   127.0.0.1     8080:30080/TCP,8443:30443/TCP     2m29s
-eclipse-hono-adapter-mqtt                       LoadBalancer   10.98.68.57     127.0.0.1     1883:31883/TCP,8883:30883/TCP     2m29s
-eclipse-hono-kafka                              ClusterIP      10.104.176.12   <none>        9092/TCP                          2m30s
-eclipse-hono-kafka-0-external                   LoadBalancer   10.98.132.252   127.0.0.1     9094:32094/TCP                    2m29s
-eclipse-hono-kafka-headless                     ClusterIP      None            <none>        9092/TCP,9093/TCP                 2m30s
-eclipse-hono-service-auth                       ClusterIP      10.99.220.217   <none>        5671/TCP                          2m29s
+eclipse-hono-adapter-amqp                       LoadBalancer   10.99.197.79    127.0.0.1     5671:32671/TCP                    2m30s
+eclipse-hono-adapter-http                       LoadBalancer   10.102.247.45   127.0.0.1     8443:30443/TCP                    2m29s
+eclipse-hono-adapter-mqtt                       LoadBalancer   10.98.68.57     127.0.0.1     8883:30883/TCP                    2m29s
+eclipse-hono-kafka                              ClusterIP      10.104.176.12   <none>        9092/TCP,9095/TCP                 2m30s
+eclipse-hono-kafka-controller0-external         LoadBalancer   10.98.132.252   127.0.0.1     9094:32094/TCP                    2m29s
+eclipse-hono-kafka-controller-headless          ClusterIP      None            <none>        9094/TCP,9092/TCP,9093/TCP        2m30s
+eclipse-hono-service-auth                       ClusterIP      10.99.220.217   <none>        5671/TCP,8088/TCP                 2m29s
 eclipse-hono-service-command-router             ClusterIP      10.98.52.92     <none>        5671/TCP                          2m29s
 eclipse-hono-service-device-registry            ClusterIP      10.109.46.233   <none>        5671/TCP,8080/TCP,8443/TCP        2m29s
-eclipse-hono-service-device-registry-ext        LoadBalancer   10.97.217.173   127.0.0.1     28080:31080/TCP,28443:31443/TCP   2m29s
+eclipse-hono-service-device-registry-ext        LoadBalancer   10.97.217.173   127.0.0.1     28443:31443/TCP                   2m29s
 eclipse-hono-service-device-registry-headless   ClusterIP      None            <none>        <none>                            2m30s
-eclipse-hono-zookeeper                          ClusterIP      10.104.9.153    <none>        2181/TCP,2888/TCP,3888/TCP        2m29s
-eclipse-hono-zookeeper-headless                 ClusterIP      None            <none>        2181/TCP,2888/TCP,3888/TCP        2m30s
 ```
 
 The listing above has been retrieved from a Minikube cluster that emulates a load balancer via the `minikube tunnel`
@@ -79,7 +77,7 @@ The following command can then be used to check for the existence of the *DEFAUL
 of the installation:
 
 ```bash
-curl -sIX GET http://$REGISTRY_IP:28080/v1/tenants/DEFAULT_TENANT
+curl -skIX GET https://$REGISTRY_IP:28443/v1/tenants/DEFAULT_TENANT
 ```
 
 the output should look similar to
@@ -88,7 +86,7 @@ the output should look similar to
 HTTP/1.1 200 OK
 etag: 89d40d26-5956-4cc6-b978-b15fda5d1823
 content-type: application/json; charset=utf-8
-content-length: 260
+content-length: 445
 ```
 
 ## Uninstalling the Chart
@@ -102,6 +100,58 @@ helm uninstall eclipse-hono -n hono
 The command removes all the Kubernetes components associated with the chart and deletes the release.
 
 ## Release Notes
+
+### 2.6.3
+
+* Recreate expired demo certificates.
+
+### 2.6.2
+
+* Use Hono 2.6.0 container images.
+
+### 2.6.1
+
+* Use Hono 2.5.1 container images.
+* Update jaegertracing/all-in-one and opentelemetry-collector image versions.
+
+### 2.6.0
+
+* Use Hono 2.5.0 container images.
+* Update bitnami/kafka chart to version 26.8.x which uses Kafka 3.6 in Kraft mode.
+* Update to latest MongoDB chart version 13.x.
+* Add a `useLegacyAmqpTraceContextFormat` configuration property, allowing usage of a more generic format
+  for storing OpenTelemetry trace context information in messages exchanged with an AMQP messaging network.
+
+### 2.5.6
+
+* Update bitnami/kafka chart to version 21.x which uses Kafka 3.4.
+* Fix creation of example tenant and devices when Device Registry is configured to expose secure ports only.
+
+### 2.5.5
+
+* Add service account for protocol-adapter pods. Needed to query the container id via the K8s API, as it is
+  done in upcoming Hono releases in case cgroups v2 is used.
+* Update jaegertracing/all-in-one and opentelemetry-collector image versions.
+
+### 2.5.4
+
+* Fix Grafana dashboard being empty in case a release name is used that doesn't contain 'hono'.
+* Use Bitnami OCI packages in Hono chart dependencies.
+* Support using Chart/Release value references in 'deviceRegistryExample.mongoDBBasedDeviceRegistry.mongodb.host'.
+* Fix some links, apply README corrections.
+
+### 2.5.3
+
+* Allow configuring pod affinities.
+
+### 2.5.2
+
+* Allow setting the priorityClass for all pods to have more control over kubernetes scheduling.
+
+### 2.5.1
+
+* Allow customizing the PVC storage size for the Device Registry service.
+
 ### 2.5.0
 
 * Allow customizing the pod/service names irrespective of .Release.Name.
@@ -206,7 +256,7 @@ In order to set a property to a non-default value, the `--set key=value[,key=val
 `helm install`. For example:
 
 ```bash
-helm install eclipse-hono eclipse-iot/hono -n hono --wait --set useLoadBalancer=false
+helm install eclipse-hono eclipse-iot/hono -n hono --wait --set jaegerBackendExample.enabled=true
 ```
 
 Alternatively, one or more YAML files that contain the properties can be provided when installing the chart:
@@ -385,7 +435,7 @@ The parameters enable the deployment of a simple AMQP 1.0 based messaging infras
 broker and configure adapters and services to use AMQP 1.0 based messaging.
 
 To use the service type `NodePort` instead of `LoadBalancer`, the following parameters must be added:
-`--set useLoadBalancer=false --set kafka.externalAccess.service.type=NodePort`.
+`--set useLoadBalancer=false --set kafka.externalAccess.broker.service.type=NodePort --set kafka.externalAccess.controller.service.type=NodePort`.
 
 ### Integrating with an existing AMQP Messaging Network
 
@@ -565,7 +615,7 @@ deviceRegistryExample:
 authServer:
   imageName: "my.registry.io/eclipse/hono-service-auth"
 commandRouterService:
-  imageName: "my.registry.io/eclipse/hono-service-command-router"
+  imageName: "my.registry.io/eclipse/hono-service-command-router-infinispan"
 adapters:
   amqp:
     imageName: "my.registry.io/eclipse/hono-adapter-amqp"
@@ -628,10 +678,6 @@ can also not be optimized during runtime which may result in a reduced performan
 The Helm chart can be configured to use these *native* images by means of explicitly specifying the component's image
 name as described in *Using specific Container Images*. The names of the images based on native executables are the
 standard image names appended by `-native`.
-
-The native executables used in the images currently do not properly detect the memory and CPU resource limits defined on the
-container. This is due to a bug in the native-image builder in GraalVM versions before 22.1. Future versions of Hono will
-probably not be affected by this anymore.
 
 In order to make the native executables aware of the memory limits, the
 [`-Xmx` GraalVM parameter](https://www.graalvm.org/22.0/reference-manual/native-image/MemoryManagement/#java-heap-size) can

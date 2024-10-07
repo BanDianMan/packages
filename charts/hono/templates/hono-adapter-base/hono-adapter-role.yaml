@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2020, 2023 Contributors to the Eclipse Foundation
+# Copyright (c) 2023 Contributors to the Eclipse Foundation
 #
 # See the NOTICE file(s) distributed with this work for additional
 # information regarding copyright ownership.
@@ -10,10 +10,12 @@
 #
 # SPDX-License-Identifier: EPL-2.0
 #
-dependencies:
-  - name: hono
-    version: ~2.4.0
-    repository: "https://eclipse.org/packages/charts/"
-  - name: ditto
-    version: ~3.3.6
-    repository: "oci://registry-1.docker.io/eclipse"
+{{- $args := dict "dot" . "name" "adapter" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  {{- include "hono.metadata" $args | nindent 2 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
